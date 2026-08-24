@@ -21,23 +21,18 @@ let photoIds = [];
 let photoIndex = 0;
 let photoRotationBusy = false;
 
-// Cache each successfully loaded photo so it does not have to be downloaded
-// again every seven seconds.
 const photoCache = new Map();
 
 function parseSignature(raw) {
   let text = String(raw || "").trim();
   if (!text) return { message: "", name: "" };
-
   const lines = text.split(/\r?\n/);
   const lastLine = lines[lines.length - 1].trim();
   const m = lastLine.match(/^[\-–—]\s*(.{1,80})$/);
-
   if (m) {
     lines.pop();
     return { message: lines.join("\n").trim(), name: m[1].trim() };
   }
-
   const inline = text.match(/([\s\S]*?)(?:\s+[\-–—])\s*([^\n\-–—]{1,80})$/);
   return inline && inline[1].trim().length > 8
     ? { message: inline[1].trim(), name: inline[2].trim() }
@@ -64,19 +59,13 @@ function escapeHTML(v) {
 function gvizTableToRows(t) {
   const h = (t.cols || []).map(c => (c.label || "").trim());
   const r = [h];
-  for (const row of t.rows || []) {
-    r.push((row.c || []).map(c => c ? (c.f ?? c.v ?? "") : ""));
-  }
+  for (const row of t.rows || []) r.push((row.c || []).map(c => c ? (c.f ?? c.v ?? "") : ""));
   return r;
 }
 
-// A Google Form response can contain more than one uploaded file in a single
-// Sheet cell. The old code only grabbed the first Drive ID. This extracts all
-// Drive IDs from common Google Drive link formats.
 function driveFileIds(raw) {
   const s = String(raw || "").trim();
   if (!s) return [];
-
   const ids = [];
   const patterns = [
     /\/d\/([-\w]{20,})/g,
@@ -84,26 +73,20 @@ function driveFileIds(raw) {
     /\/file\/d\/([-\w]{20,})/g,
     /open\?id=([-\w]{20,})/g
   ];
-
   for (const pattern of patterns) {
     let match;
     while ((match = pattern.exec(s)) !== null) ids.push(match[1]);
   }
-
-  // Also handle cells that contain a bare Drive file ID.
   if (!ids.length && /^[-\w]{20,}$/.test(s)) ids.push(s);
-
   return [...new Set(ids)];
 }
 
 function rowsToData(rows) {
   if (rows.length < 2) return { memories: [], photos: [] };
-
   const h = rows[0].map(x => String(x).trim().toLowerCase());
   const ti = h.findIndex(x => x.includes("timestamp"));
   let mi = h.findIndex(x => x.includes("write your message") || x.includes("write here") || x.includes("message"));
   if (mi < 0) mi = h.findIndex((_, i) => i !== ti);
-
   const pi = h.findIndex(x => x.includes("upload") && (x.includes("image") || x.includes("photo") || x.includes("picture")));
   const memories = [];
   const photos = [];
@@ -111,14 +94,8 @@ function rowsToData(rows) {
   rows.slice(1).forEach((row, i) => {
     const p = parseSignature(row[mi] || "");
     if (p.message) {
-      memories.push({
-        id: i + 1,
-        message: p.message,
-        name: p.name,
-        date: ti >= 0 ? formatDate(row[ti]) : ""
-      });
+      memories.push({ id: i + 1, message: p.message, name: p.name, date: ti >= 0 ? formatDate(row[ti]) : "" });
     }
-
     if (pi >= 0) photos.push(...driveFileIds(row[pi]));
   });
 
@@ -129,7 +106,6 @@ function render(memories) {
   const fp = JSON.stringify(memories);
   if (fp === lastFingerprint) return;
   lastFingerprint = fp;
-
   deck.innerHTML = "";
   dotsEl.innerHTML = "";
 
@@ -142,13 +118,11 @@ function render(memories) {
   }
 
   const old = Math.min(currentIndex, memories.length - 1);
-
   memories.forEach((item, index) => {
     const a = document.createElement("article");
     a.className = "letter-card";
     a.innerHTML = `<span class="card-number">LETTER ${String(index + 1).padStart(2, "0")}</span><p class="message">${escapeHTML(item.message)}</p><div class="signature">— ${escapeHTML(item.name)}</div>${item.date ? `<span class="date">${escapeHTML(item.date)}</span>` : ""}`;
     deck.appendChild(a);
-
     const d = document.createElement("span");
     d.className = "dot";
     dotsEl.appendChild(d);
@@ -158,7 +132,6 @@ function render(memories) {
   statusEl.textContent = "";
   statusEl.classList.remove("error");
   currentIndex = old;
-
   requestAnimationFrame(() => {
     cards[currentIndex]?.scrollIntoView({ behavior: "auto", inline: "center", block: "nearest" });
     updateActive();
@@ -170,7 +143,6 @@ function detectMime(bytes) {
   if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) return "image/png";
   if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "image/gif";
   if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
-
   const brand = String.fromCharCode(...bytes.slice(8, 12));
   if (["heic", "heix", "hevc", "hevx", "mif1"].includes(brand)) return "image/heic";
   return "application/octet-stream";
@@ -178,29 +150,17 @@ function detectMime(bytes) {
 
 async function fetchPhotoUrl(id) {
   if (photoCache.has(id)) return photoCache.get(id);
-
   const promise = (async () => {
     let lastError;
-
-    // Retry transient Apps Script / Drive failures before giving up.
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const res = await fetch(`${APP_SCRIPT_URL}?id=${encodeURIComponent(id)}`, {
-          cache: "default",
-          redirect: "follow"
-        });
-
+        const res = await fetch(`${APP_SCRIPT_URL}?id=${encodeURIComponent(id)}`, { cache: "default", redirect: "follow" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
         const base64 = (await res.text()).trim();
-        if (!base64 || base64.startsWith("ERROR:") || base64.startsWith("Missing")) {
-          throw new Error(base64 || "Empty image");
-        }
-
+        if (!base64 || base64.startsWith("ERROR:") || base64.startsWith("Missing")) throw new Error(base64 || "Empty image");
         const binary = atob(base64);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-
         const blob = new Blob([bytes], { type: detectMime(bytes) });
         return URL.createObjectURL(blob);
       } catch (err) {
@@ -208,16 +168,13 @@ async function fetchPhotoUrl(id) {
         if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 400 * attempt));
       }
     }
-
     throw lastError || new Error("Photo failed to load");
   })();
 
   photoCache.set(id, promise);
-
   try {
     return await promise;
   } catch (err) {
-    // A failed request should be retryable later instead of being permanently cached.
     photoCache.delete(id);
     throw err;
   }
@@ -235,19 +192,14 @@ function waitForImage(img, url) {
 async function setPhotoWhenReady(img, id) {
   const rail = img.closest(".photo-rail");
   rail?.classList.add("has-photo");
-
   try {
     const url = await fetchPhotoUrl(id);
     await waitForImage(img, url);
-
-    // Only replace the currently visible image after the next image has fully
-    // downloaded and decoded. A slow/failed photo therefore never creates a blank box.
     img.src = url;
     rail?.classList.add("ready");
     return true;
   } catch (err) {
     console.error("Image load failed", id, err);
-    // Keep the previous image visible if this one fails.
     if (!img.src) rail?.classList.remove("ready");
     return false;
   }
@@ -255,28 +207,26 @@ async function setPhotoWhenReady(img, id) {
 
 async function updatePhotos() {
   if (photoRotationBusy) return;
-
   if (!photoIds.length) {
     document.querySelectorAll(".photo-rail").forEach(x => x.classList.remove("ready", "has-photo"));
     return;
   }
 
   photoRotationBusy = true;
-
   try {
     const n = photoIds.length;
-    const leftIndex = photoIndex % n;
-    const rightIndex = n === 1 ? leftIndex : (photoIndex + 1) % n;
-    const leftId = photoIds[leftIndex];
-    const rightId = photoIds[rightIndex];
+
+    // Right side moves forward from the first photo: 1, 2, 3, 4...
+    const rightIndex = photoIndex % n;
+
+    // Left side starts from the end and moves backward: n, n-1, n-2...
+    const leftIndex = (n - 1 - (photoIndex % n) + n) % n;
 
     await Promise.all([
-      setPhotoWhenReady(photoLeft, leftId),
-      setPhotoWhenReady(photoRight, rightId)
+      setPhotoWhenReady(photoLeft, photoIds[leftIndex]),
+      setPhotoWhenReady(photoRight, photoIds[rightIndex])
     ]);
 
-    // Advance one position each cycle. This guarantees every detected photo gets
-    // a turn, while the right rail always shows the next photo in sequence.
     photoIndex = (photoIndex + 1) % n;
   } finally {
     photoRotationBusy = false;
@@ -285,11 +235,9 @@ async function updatePhotos() {
 
 function updateActive() {
   if (!cards.length) return;
-
   const center = deck.scrollLeft + deck.clientWidth / 2;
   let nearest = 0;
   let dist = Infinity;
-
   cards.forEach((c, i) => {
     const x = Math.abs(c.offsetLeft + c.offsetWidth / 2 - center);
     if (x < dist) {
@@ -297,7 +245,6 @@ function updateActive() {
       nearest = i;
     }
   });
-
   currentIndex = nearest;
   counter.textContent = `${currentIndex + 1} / ${cards.length}`;
   [...dotsEl.children].forEach((d, i) => d.classList.toggle("active", i === currentIndex));
@@ -337,13 +284,10 @@ deck.addEventListener("keydown", e => {
 window.miloniSheetCallback = function(response) {
   try {
     if (!response || response.status !== "ok" || !response.table) throw new Error("Unreadable sheet");
-
     const data = rowsToData(gvizTableToRows(response.table));
     render(data.memories);
-
     const changed = JSON.stringify(data.photos) !== JSON.stringify(photoIds);
     photoIds = data.photos;
-
     if (changed) {
       photoIndex = 0;
       updatePhotos();
@@ -365,18 +309,15 @@ function loadMemories() {
     activeLoader.remove();
     activeLoader = null;
   }
-
   const s = document.createElement("script");
   const q = encodeURIComponent("select *");
   s.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?gid=${SHEET_GID}&tqx=responseHandler:miloniSheetCallback&tq=${q}&headers=1&cacheBust=${Date.now()}`;
-
   s.onerror = () => {
     statusEl.classList.add("error");
     statusEl.textContent = "The letters couldn't load from Google Sheets.";
     s.remove();
     activeLoader = null;
   };
-
   activeLoader = s;
   document.body.appendChild(s);
 }
